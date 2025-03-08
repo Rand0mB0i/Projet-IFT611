@@ -1,5 +1,0 @@
-﻿  main.cpp
-C:\Users\nicol\source\repos\Projet-IFT611\main.cpp(103,150): warning C4267: 'argument': conversion from 'size_t' to 'int', possible loss of data
-C:\Users\nicol\source\repos\Projet-IFT611\main.cpp(105,150): warning C4267: 'argument': conversion from 'size_t' to 'int', possible loss of data
-C:\Users\nicol\source\repos\Projet-IFT611\main.cpp(107,150): warning C4267: 'argument': conversion from 'size_t' to 'int', possible loss of data
-  Projet-IFT611.vcxproj -> C:\Users\nicol\source\repos\Projet-IFT611\x64\Debug\Projet-IFT611.exe
