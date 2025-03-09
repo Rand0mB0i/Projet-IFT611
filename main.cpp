@@ -9,166 +9,188 @@
 
 #define JOYCON_VENDOR  0x057E
 #define JOYCON_PRODUCT 0x2007  // 0x2007 for Left Joy-Con
+using namespace std;
 
 // Global variables to store accelerometer data
 float accelerometer_x = 0.0f;
 float accelerometer_y = 0.0f;
 float accelerometer_z = 0.0f;
 
-HWND hwnd;  // Global window handle
+HWND hwnd; // Global window handle
+unsigned char raw_data[65] = {};
+constexpr float accel_scale = 0.000244f; // Correct scale for ±8G
 
 // Send command to the device
-void sendCommand(hid_device* handle, const std::vector<unsigned char>& data) {
-    hid_write(handle, data.data(), data.size());
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+void sendCommand(hid_device* handle, const std::vector<unsigned char>& data)
+{
+	hid_write(handle, data.data(), data.size());
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
 }
 
 // Read IMU data from Joy-Con
-void readIMUData(hid_device* handle) {
-    // Enable IMU
-    sendCommand(handle, { 0x40, 0x01 });
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    sendCommand(handle, { 0x40, 0x01 });
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+void read_imu_data(hid_device* handle)
+{
+	// Enable IMU
+	sendCommand(handle, {0x01, 0x40});
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    // Set IMU sensitivity
-    sendCommand(handle, { 0x41, 0x03, 0x00, 0x01, 0x02 }); // Accel ±8G, Gyro ±2000dps
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	sendCommand(handle, {0x01, 0x40});
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    const float ACCEL_SCALE = 0.000244f;  // Correct scale for ±8G
+	// Set IMU sensitivity
+	sendCommand(handle, { 0x41, 0x03, 0x00, 0x00, 0x02 }); // Accel ±8G, Gyro ±2000dps
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    // Simulate data update
-    for (int i = 0; i < 20; ++i)
-    {
-        unsigned char data[49];
-        int bytesRead = hid_read(handle, data, sizeof(data));
+	// Simulate data update
+	while (true)
+	{
+		int bytesRead = hid_read(handle, raw_data, sizeof(raw_data));
 
-        if (bytesRead < 49) {
-            std::cerr << "Failed to read IMU data.\n";
-            continue;
-        }
+		if (bytesRead < 5)
+		{
+			std::cerr << "Failed to read IMU data.\n";
+			std::cout << "Nombre de byte lus: " << bytesRead << "\n";
+			this_thread::sleep_for(std::chrono::milliseconds(20));
+			continue;
+		}
 
-        // Check if it's a valid IMU report (packet ID should be 0x30 or 0x31)
-        if (data[0] != 0x30 && data[0] != 0x31) {
-            std::cerr << "Unexpected packet ID: " << std::hex << (int)data[0] << std::dec << "\n";
-            continue;
-        }
+		// If we get IMU data (0x30), ignore and keep reading
+		if (raw_data[0] == 0x30)
+		{
+			//std::cout << "Received IMU data..." << std::endl;
+		}
 
-        // Read accelerometer data
-        int16_t accel_x_raw = (data[13] << 8) | data[12]; // Little-endian byte order
-        int16_t accel_y_raw = (data[15] << 8) | data[14];
-        int16_t accel_z_raw = (data[17] << 8) | data[16];
 
-        float ax = accel_x_raw * ACCEL_SCALE;
-        float ay = accel_y_raw * ACCEL_SCALE;
-        float az = accel_z_raw * ACCEL_SCALE;
+		// Read accelerometer data
+		int16_t accel_x_raw = (raw_data[13] << 8) | raw_data[12]; // Little-endian byte order
+		int16_t accel_y_raw = (raw_data[15] << 8) | raw_data[14];
+		int16_t accel_z_raw = raw_data[17] << 8 | raw_data[16];
 
-        // Update global accelerometer data
-        accelerometer_x = ax;
-        accelerometer_y = ay;
-        accelerometer_z = az;
+		float ax = accel_x_raw * accel_scale;
+		float ay = accel_y_raw * accel_scale;
+		float az = accel_z_raw * accel_scale;
 
-        // Notify the window to repaint itself
-        InvalidateRect(hwnd, nullptr, TRUE);
+		// Update global accelerometer data
+		accelerometer_x = ax;
+		accelerometer_y = ay;
+		accelerometer_z = az;
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(15)); // Match 15ms report rate
-    }
+		cout << "Acceleration:\nX: " << accelerometer_x << "\nY: " << accelerometer_y << "\nZ: " << accelerometer_z << "\n";
+
+		// Notify the window to repaint itself
+		InvalidateRect(hwnd, nullptr, TRUE);
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
 }
 
 // Window procedure for handling window messages
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-    switch (uMsg)
-    {
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+	switch (uMsg)
+	{
+	case WM_DESTROY:
+		PostQuitMessage(0);
+		return 0;
 
-    case WM_PAINT:
-    {
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hwnd, &ps);
+	case WM_PAINT:
+		{
+			PAINTSTRUCT ps;
+			HDC hdc = BeginPaint(hwnd, &ps);
 
-        // Display accelerometer data on the window
-        std::wstringstream ss;
-        ss << L"Accelerometer:\n"
-            << L"X: " << accelerometer_x << L" G\n"
-            << L"Y: " << accelerometer_y << L" G\n"
-            << L"Z: " << accelerometer_z << L" G";
+			// Display accelerometer data on the window
+			std::wstringstream ss;
+			/*ss << L"Accelerometer:\n"
+			    << L"X: " << accelerometer_x << L" G\n"
+			    << L"Y: " << accelerometer_y << L" G\n"
+			    << L"Z: " << accelerometer_z << L" G";*/
 
-        std::wstring str = ss.str();
-        int yPos = 10;
+			// Display the raw byte data in hex
+			for (int i = 0; i < 65; ++i)
+			{
+				ss << std::setw(2) << std::setfill(L'0') << std::hex << raw_data[i] << L" ";
+				if ((i + 1) % 10 == 0)
+				{
+					ss << L"\n"; // New line after every 10 bytes for readability
+				}
+			}
 
-        TextOutW(hdc, 10, yPos, L"Accelerometer Data", 19);
-        yPos += 20;
-        TextOutW(hdc, 10, yPos, (L"X: " + std::to_wstring(accelerometer_x) + L" G").c_str(), (L"X: " + std::to_wstring(accelerometer_x) + L" G").size());
-        yPos += 20;
-        TextOutW(hdc, 10, yPos, (L"Y: " + std::to_wstring(accelerometer_y) + L" G").c_str(), (L"Y: " + std::to_wstring(accelerometer_y) + L" G").size());
-        yPos += 20;
-        TextOutW(hdc, 10, yPos, (L"Z: " + std::to_wstring(accelerometer_z) + L" G").c_str(), (L"Y: " + std::to_wstring(accelerometer_y) + L" G").size());
+			std::wstring str = ss.str();
+			TextOutW(hdc, 10, 10, str.c_str(), str.length());
 
-        EndPaint(hwnd, &ps);
-        return 0;
-    }
+			EndPaint(hwnd, &ps);
+			return 0;
+		}
 
-    default:
-        return DefWindowProc(hwnd, uMsg, wParam, lParam);
-    }
+	default:
+		return DefWindowProc(hwnd, uMsg, wParam, lParam);
+	}
 }
 
 // Main function to initialize HID, create window and read IMU data
-int main() {
-    // Initialize HIDAPI
-    if (hid_init()) {
-        std::cerr << "Failed to initialize HIDAPI\n";
-        return -1;
-    }
+int main()
+{
+	// Initialize HIDAPI
+	if (hid_init())
+	{
+		std::cerr << "Failed to initialize HIDAPI\n";
+		return -1;
+	}
 
-    // Open the Joy-Con device
-    hid_device* handle = hid_open(JOYCON_VENDOR, JOYCON_PRODUCT, NULL);
-    if (!handle) {
-        std::cerr << "Failed to open Joy-Con\n";
-        return -1;
-    }
+	// Open the Joy-Con device
+	hid_device* handle = hid_open(JOYCON_VENDOR, JOYCON_PRODUCT, nullptr);
+	if (!handle)
+	{
+		std::cerr << "Failed to open Joy-Con\n";
+		return -1;
+	}
 
-    // Window class registration
-    const wchar_t CLASS_NAME[] = L"AccelerometerWindow";
+	// Set non-blocking mode
+	hid_set_nonblocking(handle, 1);
 
-    WNDCLASS wc = {};
-    wc.lpfnWndProc = WindowProc;  // Set window procedure
-    wc.hInstance = GetModuleHandle(nullptr);
-    wc.lpszClassName = CLASS_NAME;
+	// Window class registration
+	constexpr wchar_t CLASS_NAME[] = L"AccelerometerWindow";
 
-    if (!RegisterClassW(&wc)) {  // Use RegisterClassW for wide strings
-        std::cerr << "Window class registration failed!" << std::endl;
-        return -1;
-    }
+	WNDCLASS wc = {};
+	wc.lpfnWndProc = WindowProc; // Set window procedure
+	wc.hInstance = GetModuleHandle(nullptr);
+	wc.lpszClassName = CLASS_NAME;
 
-    // Create the window
-    hwnd = CreateWindowEx(
-        0, CLASS_NAME, L"Accelerometer Data", WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 400, 300, nullptr, nullptr, wc.hInstance, nullptr);
+	if (!RegisterClassW(&wc))
+	{
+		// Use RegisterClassW for wide strings
+		std::cerr << "Window class registration failed!" << std::endl;
+		return -1;
+	}
 
-    if (!hwnd) {
-        std::cerr << "Window creation failed!" << std::endl;
-        return -1;
-    }
+	// Create the window
+	hwnd = CreateWindowEx(
+		0, CLASS_NAME, L"Accelerometer Data", WS_OVERLAPPEDWINDOW,
+		CW_USEDEFAULT, CW_USEDEFAULT, 1500, 300, nullptr, nullptr, wc.hInstance, nullptr);
 
-    ShowWindow(hwnd, SW_SHOWNORMAL);
-    UpdateWindow(hwnd);
+	if (!hwnd)
+	{
+		std::cerr << "Window creation failed!" << std::endl;
+		return -1;
+	}
 
-    // Start a thread to read IMU data
-    std::thread imuThread(readIMUData, handle);
+	ShowWindow(hwnd, SW_SHOWNORMAL);
+	UpdateWindow(hwnd);
 
-    // Message loop
-    MSG msg = {};
-    while (GetMessage(&msg, nullptr, 0, 0)) {
-        TranslateMessage(&msg);
-        DispatchMessage(&msg);
-    }
+	// Start a thread to read IMU data
+	std::thread imuThread(read_imu_data, handle);
 
-    imuThread.join();  // Wait for the IMU thread to finish
+	// Message loop
+	MSG msg = {};
+	while (GetMessage(&msg, nullptr, 0, 0))
+	{
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
+	}
 
-    hid_close(handle);
-    hid_exit();
-    return 0;
+	imuThread.join(); // Wait for the IMU thread to finish
+
+	hid_close(handle);
+	hid_exit();
+	return 0;
 }
