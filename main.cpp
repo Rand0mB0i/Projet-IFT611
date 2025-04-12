@@ -13,7 +13,25 @@ float accel_x = 0.0f;
 float accel_y = 0.0f;
 float accel_z = 0.0f;
 
+// Offsets for reset
+float offset_x = 0.0f;
+float offset_y = 0.0f;
+float offset_z = 0.0f;
+
 HWND hwnd; // Global window handle
+
+enum Direction { NONE, UP, DOWN, LEFT, RIGHT };
+
+Direction DetectDirection(float x, float y, float threshold = 0.7f)
+{
+	if (abs(x) < threshold && abs(y) < threshold)
+		return NONE;
+
+	if (abs(x) > abs(y))
+		return (x > 0) ? LEFT : RIGHT;
+	else
+		return (y > 0) ? UP : DOWN;
+}
 
 void UpdateSensorData()
 {
@@ -24,9 +42,19 @@ void UpdateSensorData()
 	while (true)
 	{
 		MOTION_STATE motionState = JslGetMotionState(joyConHandle);
-		accel_x = motionState.accelX;
-		accel_y = motionState.accelY;
-		accel_z = motionState.accelZ;
+		float buttonState = JslGetButtons(joyConHandle);
+		
+		bool resetPressed = (buttonState == 0x00400 || buttonState == 0x00800);
+		if (resetPressed)
+		{
+			offset_x = motionState.accelX;
+			offset_y = motionState.accelY;
+			offset_z = motionState.accelZ;
+		}
+
+		accel_x = motionState.accelX - offset_x;
+		accel_y = motionState.accelY - offset_y;
+		accel_z = motionState.accelZ - offset_z;
 
 		InvalidateRect(hwnd, nullptr, TRUE);
 		std::this_thread::sleep_for(std::chrono::milliseconds(15));
@@ -59,6 +87,22 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			swprintf(buffer, 100, L"X: %.3f\nY: %.3f\nZ: %.3f", accel_x, accel_y, accel_z);
 			DrawTextW(hdc, buffer, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
+			// Détecte et affiche la direction
+			Direction dir = DetectDirection(accel_x, accel_y);
+			const wchar_t* dirText = L"Aucun mouvement";
+			switch (dir)
+			{
+			case UP: dirText = L"Haut"; break;
+			case DOWN: dirText = L"Bas"; break;
+			case LEFT: dirText = L"Gauche"; break;
+			case RIGHT: dirText = L"Droite"; break;
+			default: break;
+			}
+
+			RECT dirRect = rect;
+			dirRect.top += 50;
+			DrawTextW(hdc, dirText, -1, &dirRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
 			EndPaint(hwnd, &ps);
 			return 0;
 		}
@@ -74,7 +118,7 @@ int main()
 	int deviceCount = JslConnectDevices();
 	if (deviceCount == 0)
 	{
-		std::cerr << L"Aucun peripherique detecte." << std::endl;
+		cerr << L"Aucun peripherique detecte." << endl;
 		return -1;
 	}
 
@@ -85,6 +129,11 @@ int main()
 	accel_x = motionState.accelX;
 	accel_y = motionState.accelY;
 	accel_z = motionState.accelZ;
+
+	// Initial offset (optionnel)
+	offset_x = accel_x;
+	offset_y = accel_y;
+	offset_z = accel_z;
 
 	// Window class registration
 	constexpr wchar_t CLASS_NAME[] = L"AccelerometerWindow";
@@ -97,18 +146,18 @@ int main()
 	if (!RegisterClassW(&wc))
 	{
 		// Use RegisterClassW for wide strings
-		std::cerr << "Window class registration failed!" << std::endl;
+		cerr << "Window class registration failed!" << endl;
 		return -1;
 	}
 
 	// Create the window
 	hwnd = CreateWindowEx(
 		0, CLASS_NAME, L"Accelerometer Data", WS_OVERLAPPEDWINDOW,
-		CW_USEDEFAULT, CW_USEDEFAULT, 1500, 300, nullptr, nullptr, wc.hInstance, nullptr);
+		CW_USEDEFAULT, CW_USEDEFAULT, 300, 300, nullptr, nullptr, wc.hInstance, nullptr);
 
 	if (!hwnd)
 	{
-		std::cerr << "Window creation failed!" << std::endl;
+		cerr << "Window creation failed!" << endl;
 		return -1;
 	}
 
@@ -116,7 +165,7 @@ int main()
 	UpdateWindow(hwnd);
 
 	// Start a thread to read IMU data
-	std::thread sensorThread(UpdateSensorData);
+	thread sensorThread(UpdateSensorData);
 
 	// Message loop
 	MSG msg = {};
@@ -130,41 +179,3 @@ int main()
 
 	return 0;
 }
-
-/*
-int main() {
-	int deviceCount = JslConnectDevices();
-	if (deviceCount == 0) {
-		std::cerr << "Aucun peripherique detecte." << std::endl;
-		return -1;
-	}
-
-	int handles[1];
-	int count = JslGetConnectedDeviceHandles(handles, 1);
-	int joyConHandle = handles[0]; // Supposons que le premier périphérique soit le Joy-Con
-	IMU_STATE motionState = JslGetIMUState(joyConHandle);
-	std::cout << R"(Acceleration :)" << std::endl;
-	std::cout << R"(Acc X : )" << motionState.accelX << std::endl;
-	std::cout << R"(Acc Y : )" << motionState.accelY << std::endl;
-	std::cout << R"(Acc Z : )" << motionState.accelZ << std::endl;
-	std::cout << R"(Gyro X : )" << motionState.gyroX << std::endl;
-	std::cout << R"(Gyro Y : )" << motionState.gyroY << std::endl;
-	std::cout << R"(Gyro Z : )" << motionState.gyroZ << std::endl;
-
-	while (true) {
-		motionState = JslGetIMUState(joyConHandle);
-
-		std::cout << R"(Acc X : )" << motionState.accelX << std::endl;
-		std::cout << R"(Acc Y : )" << motionState.accelY << std::endl;
-		std::cout << R"(Acc Z : )" << motionState.accelZ << std::endl;
-		std::cout << R"(Gyro X : )" << motionState.gyroX << std::endl;
-		std::cout << R"(Gyro Y : )" << motionState.gyroY << std::endl;
-		std::cout << R"(Gyro Z : )" << motionState.gyroZ << std::endl;
-
-		// Traitez les données ici
-		std::this_thread::sleep_for(std::chrono::milliseconds(15)); // Ajustez selon vos besoins
-		// Notify the window to repaint itself
-		InvalidateRect(hwnd, nullptr, TRUE);
-	}
-}
-*/
