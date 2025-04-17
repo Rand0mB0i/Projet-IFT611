@@ -30,6 +30,10 @@ std::atomic<bool> waitingForInput = false;
 std::atomic<bool> correctInputReceived = false;
 std::string feedback = "";
 
+enum Mode { GAME, DEBUG };
+std::atomic<Mode> currentMode = GAME;
+
+
 Direction GetRandomDirection() {
 	static std::default_random_engine engine(std::random_device{}());
 	std::uniform_int_distribution<int> dist(0, 3);
@@ -70,6 +74,15 @@ void UpdateSensorData()
 		float buttonState = JslGetButtons(joyConHandle);
 		
 		bool resetPressed = (buttonState == 0x00400 || buttonState == 0x00800);
+		bool modeTogglePressed = (buttonState == 0x00010 || buttonState == 0x00020); // "Plus" ou "Moins"
+		static bool lastToggle = false;
+
+		if (modeTogglePressed && !lastToggle)
+		{
+			currentMode = (currentMode == GAME) ? DEBUG : GAME;
+		}
+		lastToggle = modeTogglePressed;
+
 		if (resetPressed)
 		{
 			offset_x = motionState.accelX;
@@ -111,47 +124,53 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			PAINTSTRUCT ps;
 			HDC hdc = BeginPaint(hwnd, &ps);
 
-			// Efface l'ancienne valeur en remplissant le fond en blanc
 			RECT rect;
 			GetClientRect(hwnd, &rect);
 			HBRUSH brush = CreateSolidBrush(RGB(255, 255, 255));
 			FillRect(hdc, &rect, brush);
 			DeleteObject(brush);
 
-			// Display accelerometer data on the window
-			wchar_t buffer[100];
-			swprintf(buffer, 100, L"X: %.3f\nY: %.3f\nZ: %.3f", accel_x, accel_y, accel_z);
-			DrawTextW(hdc, buffer, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-			// Détecte et affiche la direction
-			Direction dir = DetectDirection(accel_x, accel_y);
-			const wchar_t* dirText = L"Aucun mouvement";
-			switch (dir)
+			if (currentMode == DEBUG)
 			{
-			case UP: dirText = L"Haut"; break;
-			case DOWN: dirText = L"Bas"; break;
-			case LEFT: dirText = L"Gauche"; break;
-			case RIGHT: dirText = L"Droite"; break;
-			default: break;
+				// Affiche les données brutes
+				wchar_t buffer[100];
+				swprintf(buffer, 100, L"X: %.3f\nY: %.3f\nZ: %.3f", accel_x, accel_y, accel_z);
+				DrawTextW(hdc, buffer, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+				Direction dir = DetectDirection(accel_x, accel_y);
+				const wchar_t* dirText = DirectionToText(dir);
+
+				RECT dirRect = rect;
+				dirRect.top += 50;
+				DrawTextW(hdc, dirText, -1, &dirRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+			}
+			else
+			{
+				// Mode jeu : instruction + feedback
+				RECT instrRect = rect;
+				instrRect.top += 30;
+				wstring instrText = L"Instruction : ";
+				instrText += DirectionToText(currentInstruction);
+				DrawTextW(hdc, instrText.c_str(), -1, &instrRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+				RECT feedRect = rect;
+				feedRect.top += 80;
+				wstring wfeedback(feedback.begin(), feedback.end());
+				DrawTextW(hdc, wfeedback.c_str(), -1, &feedRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 			}
 
-			RECT dirRect = rect;
-			dirRect.top += 50;
-			DrawTextW(hdc, dirText, -1, &dirRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+			RECT helpRect;
+			helpRect.left = rect.right - 250;
+			helpRect.top = rect.top + 10;
+			helpRect.right = rect.right - 10;
+			helpRect.bottom = rect.top + 100;
 
-			// Affiche l'instruction actuelle
-			RECT instrRect = rect;
-			instrRect.top += 100;
-			wstring instrText = L"Instruction : ";
-			instrText += DirectionToText(currentInstruction);
-			DrawTextW(hdc, instrText.c_str(), -1, &instrRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+			std::wstring helpText =
+				L"Contrôles :\n"
+				L"ZL/ZR : Reset capteurs\n"
+				L"+/- : Changer mode Debug/Jeu";
 
-			// Affiche le feedback (temps de réaction)
-			RECT feedRect = rect;
-			feedRect.top += 150;
-			wstring wfeedback(feedback.begin(), feedback.end());
-			DrawTextW(hdc, wfeedback.c_str(), -1, &feedRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
+			DrawTextW(hdc, helpText.c_str(), -1, &helpRect, DT_LEFT | DT_TOP);
 			EndPaint(hwnd, &ps);
 			return 0;
 		}
@@ -201,8 +220,8 @@ int main()
 
 	// Create the window
 	hwnd = CreateWindowEx(
-		0, CLASS_NAME, L"Accelerometer Data", WS_OVERLAPPEDWINDOW,
-		CW_USEDEFAULT, CW_USEDEFAULT, 300, 300, nullptr, nullptr, wc.hInstance, nullptr);
+		0, CLASS_NAME, L"Super Mario Party 2025", WS_OVERLAPPEDWINDOW,
+		CW_USEDEFAULT, CW_USEDEFAULT, 800, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
 	if (!hwnd)
 	{
@@ -220,18 +239,25 @@ int main()
 	thread gameLoop([] {
 		while (true)
 		{
-			std::this_thread::sleep_for(std::chrono::seconds(1));
+			if (currentMode == GAME)
+			{
+				std::this_thread::sleep_for(std::chrono::seconds(1));
 
-			currentInstruction = GetRandomDirection();
-			instructionTime = std::chrono::steady_clock::now();
-			waitingForInput = true;
-			correctInputReceived = false;
-			feedback = "";
+				currentInstruction = GetRandomDirection();
+				instructionTime = std::chrono::steady_clock::now();
+				waitingForInput = true;
+				correctInputReceived = false;
+				feedback = "";
 
-			while (!correctInputReceived)
-				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+				while (currentMode == GAME && !correctInputReceived)
+					std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
-			std::this_thread::sleep_for(std::chrono::seconds(2));
+				std::this_thread::sleep_for(std::chrono::seconds(2));
+			}
+			else
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			}
 		}
 		});
 
