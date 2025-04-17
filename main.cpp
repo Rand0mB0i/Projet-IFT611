@@ -167,7 +167,7 @@ int main()
 	int deviceCount = JslConnectDevices();
 	if (deviceCount == 0)
 	{
-		cerr << L"Aucun peripherique detecte." << endl;
+		cerr << "Aucun peripherique detecte." << endl;
 		return -1;
 	}
 
